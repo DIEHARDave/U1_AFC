@@ -122,6 +122,14 @@ class U1AFC:
         self.default_weight = config.getfloat("default_weight", 1000., minval=0.)
         self.poll_interval = config.getfloat("poll_interval", 2., minval=0.5)
         self.start_delay = config.getfloat("start_delay", 10., minval=0.)
+        # Who sets Moonraker's active spool. SpoolLink follows the head on the
+        # carriage and print_task_config (which this bridge keeps equal to the
+        # AFC lanes); AFC writing too made them race during tool changes.
+        self.active_spool = config.getchoice("active_spool",
+                                             {"spoollink": "spoollink", "afc": "afc"},
+                                             "spoollink")
+        self._afc_set_active_spool = None
+        self.skipped_active_spool = 0
         self.last_ptc_spool = {}
         self.last_lane_spool = {}
         self.last_actions = []
@@ -136,6 +144,7 @@ class U1AFC:
                                desc="Run the U1_AFC lane sync now")
 
     def _handle_ready(self):
+        self._hook_active_spool()
         self.timer = self.reactor.register_timer(
             self._timer_cb, self.reactor.monotonic() + self.start_delay)
 
@@ -145,6 +154,34 @@ class U1AFC:
         except Exception:
             logging.exception("u1_afc: sync failed")
         return eventtime + self.poll_interval
+
+    # Active spool ---------------------------------------------------------
+
+    def _spoollink_present(self):
+        webhooks = self.printer.lookup_object("webhooks", None)
+        methods = getattr(webhooks, "_remote_methods", None) or {}
+        return bool(methods.get("spoollink_resolve_spool"))
+
+    def _hook_active_spool(self):
+        if self.active_spool != "spoollink":
+            return
+        afc = self._afc()
+        spool = getattr(afc, "spool", None)
+        if spool is None or self._afc_set_active_spool is not None:
+            return
+        original = spool.set_active_spool
+        self._afc_set_active_spool = original
+
+        def set_active_spool(ID):
+            # Checked per call: SpoolLink registers with Klipper only once
+            # Moonraker is connected, and may be disabled.
+            if self._spoollink_present():
+                self.skipped_active_spool += 1
+                logging.debug("u1_afc: AFC set_active_spool(%s) left to SpoolLink", ID)
+                return
+            original(ID)
+        spool.set_active_spool = set_active_spool
+        logging.info("u1_afc: SpoolLink owns the active spool (AFC's writes skipped while it runs)")
 
     # Reading state -------------------------------------------------------
 
@@ -326,6 +363,10 @@ class U1AFC:
 
     def get_status(self, eventtime=None):
         return {"sync_loads": self.sync_loads, "sync_spools": self.sync_spools,
+                "active_spool": self.active_spool,
+                "active_spool_writer": ("spoollink" if self.active_spool == "spoollink"
+                                        and self._spoollink_present() else "afc"),
+                "afc_active_spool_skipped": self.skipped_active_spool,
                 "last_actions": list(self.last_actions)}
 
 

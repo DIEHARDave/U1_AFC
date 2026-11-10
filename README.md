@@ -20,6 +20,11 @@ adds what was missing in testing:
   `print_task_config`. Its first pass after a fresh install brings the
   loaded heads and their spools into AFC. Lanes without a Spoolman spool get
   a 1000 g default so the AFC panels don't draw an empty spool.
+- **One writer of the active spool.** AFC and SpoolLink both set
+  Moonraker's active spool, and raced on every tool change (SpoolLink
+  answered AFC's write with the old head's spool, then corrected). The
+  bridge skips AFC's writes while SpoolLink runs; SpoolLink sets the spool
+  of the head on the carriage, which the bridge keeps equal to the AFC lane.
 - **Tool changes before Z is homed.** The U1's start gcode runs `G28 X Y`
   and then `T0`; AFC refuses tool changes until X, Y and Z are homed, and the
   print then runs on whichever head was picked last. With
@@ -71,6 +76,7 @@ bash /home/lava/U1_AFC/uninstall.sh --no-afc-lite --remove-afc
 | `default_weight` | 1000 | Weight (g) for a loaded lane without a Spoolman spool |
 | `poll_interval` | 2 | Seconds between checks (only while AFC is idle and not printing) |
 | `start_delay` | 10 | Seconds after Klipper start before the first check |
+| `active_spool` | spoollink | Who sets Moonraker's active spool: `spoollink` (AFC's writes skipped while SpoolLink runs) or `afc` |
 
 Commands: `AFC_BRIDGE_STATUS` (each lane: AFC vs U1, what the bridge would
 change), `AFC_BRIDGE_SYNC` (check now).
@@ -93,16 +99,13 @@ a spool you set in the AFC panel stays until the U1's changes again.
 - Bridge with a real U1-screen load (unknown Creality tag): lane loaded,
   filament copied, 1000 g; spool set in AFC handed to SpoolLink, tag bound
   in Spoolman, the next scan resolved to it on its own
+- Active spool: T3→T1→T0→T3 with one SpoolLink write per change, no flip
 
 Not yet: runout, a firmware update, `install.sh` on a printer that never had
 AFC.
 
 ## Known issues
 
-- **Two writers of the active spool.** SpoolLink still sets Moonraker's
-  active spool on head changes, next to AFC; during a change it briefly
-  set the old head's spool. Ends right, but usage could land on the wrong
-  spool for a moment.
 - **AFC's unload is shallow on the U1.** `LANE_UNLOAD` retracts 60 mm out
   of the hotend; the filament stays in the head and the U1 feeder still
   reports it loaded. The AFC panel's unload sends `TOOL_UNLOAD`, which needs
