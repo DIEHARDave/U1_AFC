@@ -116,9 +116,11 @@ class U1AFC:
         self.timer = None
         self.printer.register_event_handler("klippy:ready", self._handle_ready)
         gcode = self.printer.lookup_object("gcode")
-        gcode.register_command("U1_AFC_STATUS", self.cmd_U1_AFC_STATUS,
+        # No digits in command names: Klipper parses "U1_..." / "AFC_U1_..." as
+        # the command "U1" / "AFC_U1" plus arguments.
+        gcode.register_command("AFC_BRIDGE_STATUS", self.cmd_AFC_BRIDGE_STATUS,
                                desc="Show what U1_AFC would change on each AFC lane")
-        gcode.register_command("U1_AFC_SYNC", self.cmd_U1_AFC_SYNC,
+        gcode.register_command("AFC_BRIDGE_SYNC", self.cmd_AFC_BRIDGE_SYNC,
                                desc="Run the U1_AFC lane sync now")
 
     def _handle_ready(self):
@@ -264,7 +266,7 @@ class U1AFC:
                 self.last_actions = (self.last_actions + [msg])[-10:]
             self.last_ptc_spool[lane.name] = ptc["spool_id"]
 
-    def cmd_U1_AFC_STATUS(self, gcmd):
+    def cmd_AFC_BRIDGE_STATUS(self, gcmd):
         eventtime = self.reactor.monotonic()
         afc, passes = self._passes(eventtime)
         if afc is None:
@@ -282,7 +284,7 @@ class U1AFC:
                 ", ".join(_fmt(a) for a in actions) or "in step"))
         gcmd.respond_info("\n".join(lines))
 
-    def cmd_U1_AFC_SYNC(self, gcmd):
+    def cmd_AFC_BRIDGE_SYNC(self, gcmd):
         self.sync()
         gcmd.respond_info("U1_AFC: sync done")
 

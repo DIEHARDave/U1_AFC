@@ -44,7 +44,7 @@ bash /home/lava/U1_AFC/install.sh
 ```
 
 Klipper restarts twice (AFC's own enable script, then U1_AFC). Then check
-the lanes with `U1_AFC_STATUS` in the console. Run `install.sh` again after
+the lanes with `AFC_BRIDGE_STATUS` in the console. Run `install.sh` again after
 a firmware update (which likely undoes the changes) or to move to a new
 `AFC_COMMIT`. A backup of the files it touches goes to
 `/userdata/u1_afc_backup/<date>/`.
@@ -71,8 +71,8 @@ bash /home/lava/U1_AFC/uninstall.sh --no-afc-lite --remove-afc
 | `poll_interval` | 2 | Seconds between checks (only while AFC is idle and not printing) |
 | `start_delay` | 10 | Seconds after Klipper start before the first check |
 
-Commands: `U1_AFC_STATUS` (each lane: AFC vs U1, what the bridge would
-change), `U1_AFC_SYNC` (check now).
+Commands: `AFC_BRIDGE_STATUS` (each lane: AFC vs U1, what the bridge would
+change), `AFC_BRIDGE_SYNC` (check now).
 
 Rules: the U1 wins when *its* spool changes (a scan, the screen, SpoolLink);
 a spool you set in the AFC panel stays until the U1's changes again.

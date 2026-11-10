@@ -159,4 +159,4 @@ if [ "$RESTART" = 1 ]; then
     done
     curl -s -m 5 "$MOON/printer/info" | python3 -c 'import sys,json; r=json.load(sys.stdin)["result"]; print(">> Klipper:", r["state"], "-", r["state_message"].strip()[:300])' || true
 fi
-say "Done. Backup: $BACKUP. Check lanes with U1_AFC_STATUS in the console."
+say "Done. Backup: $BACKUP. Check lanes with AFC_BRIDGE_STATUS in the console."
