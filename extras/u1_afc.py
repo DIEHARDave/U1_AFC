@@ -32,8 +32,11 @@ def rgba_to_hex(rgba):
     return "#" + rgba[:6].upper()
 
 
+UNSET = object()
+
+
 def plan_lane(lane, feed, ptc, last_ptc_spool, default_weight=1000.0,
-              sync_loads=True, sync_spools=True):
+              sync_loads=True, sync_spools=True, last_lane_spool=UNSET):
     """
     Decide what to change on one AFC lane. Pure function (no Klipper).
 
@@ -45,9 +48,12 @@ def plan_lane(lane, feed, ptc, last_ptc_spool, default_weight=1000.0,
                 U1's print_task_config entry for this head
     :param last_ptc_spool: ptc spool_id seen on the previous pass, None on
                            the first pass after start
+    :param last_lane_spool: the lane's spool_id after the previous pass,
+                            UNSET on the first pass
     :return: list of actions: ("set_spool", id), ("clear_spool",),
              ("set_filament", material, color), ("set_weight", w),
-             ("mark_loaded",)
+             ("mark_loaded",), ("push_spool", id) (tell the U1 / SpoolLink
+             about a spool assigned on the AFC side)
     """
     actions = []
     lane_spool = lane.get("spool_id") or None
@@ -88,6 +94,11 @@ def plan_lane(lane, feed, ptc, last_ptc_spool, default_weight=1000.0,
                     actions.append(("set_filament", ptc_material, ptc_color))
                 lane_spool = None
                 weight = 0
+        elif (last_lane_spool is not UNSET and lane_spool != last_lane_spool
+              and lane_spool is not None and ptc_spool != lane_spool):
+            # Spool assigned on the AFC side (panel, SET_SPOOL_ID): hand it to
+            # the U1 so both agree and SpoolLink binds the scanned tag to it.
+            actions.append(("push_spool", lane_spool))
         elif last_ptc_spool is None and lane_spool is None and ptc_spool > 0:
             # First pass after start: migrate a spool AFC doesn't know yet
             actions.append(("set_spool", ptc_spool))
@@ -112,6 +123,7 @@ class U1AFC:
         self.poll_interval = config.getfloat("poll_interval", 2., minval=0.5)
         self.start_delay = config.getfloat("start_delay", 10., minval=0.)
         self.last_ptc_spool = {}
+        self.last_lane_spool = {}
         self.last_actions = []
         self.timer = None
         self.printer.register_event_handler("klippy:ready", self._handle_ready)
@@ -205,9 +217,31 @@ class U1AFC:
 
     # Acting ----------------------------------------------------------------
 
-    def _apply(self, afc, lane, actions):
+    def _card_uid(self, index, eventtime):
+        obj = self.printer.lookup_object("filament_detect", None)
+        try:
+            info = obj.get_status(eventtime).get("info") or []
+            uid = info[index].get("CARD_UID") if index < len(info) else None
+        except Exception:
+            return ""
+        if isinstance(uid, (list, tuple)):
+            return "".join("%02X" % (int(b),) for b in uid)
+        return ""
+
+    def _push_spool(self, index, spool_id):
+        # What PAXX's SET_SPOOL_ID macro did: SpoolLink applies the spool to the
+        # head (print_task_config) and binds the scanned card UID to it.
+        uid = self._card_uid(index, self.reactor.monotonic())
+        webhooks = self.printer.lookup_object("webhooks")
+        webhooks.call_remote_method("spoollink_resolve_spool", channel=index,
+                                    spool_id=int(spool_id), card_uid=uid)
+
+    def _apply(self, afc, lane, index, actions):
         for action in actions:
             kind = action[0]
+            if kind == "push_spool":
+                self._push_spool(index, action[1])
+                continue
             if kind == "set_spool":
                 afc.spool.set_spoolID(lane, action[1], save_vars=False)
             elif kind == "clear_spool":
@@ -243,7 +277,8 @@ class U1AFC:
             state = self._lane_state(lane)
             feed = self._feed_state(index, eventtime)
             actions = plan_lane(state, feed, ptc, self.last_ptc_spool.get(lane.name),
-                                self.default_weight, self.sync_loads, self.sync_spools)
+                                self.default_weight, self.sync_loads, self.sync_spools,
+                                self.last_lane_spool.get(lane.name, UNSET))
             out.append((lane, index, state, feed, ptc, actions))
         return afc, out
 
@@ -260,11 +295,12 @@ class U1AFC:
                 except Exception:
                     pass
                 try:
-                    self._apply(afc, lane, actions)
+                    self._apply(afc, lane, index, actions)
                 except Exception:
                     logging.exception("u1_afc: applying %s to %s failed", actions, lane.name)
                 self.last_actions = (self.last_actions + [msg])[-10:]
             self.last_ptc_spool[lane.name] = ptc["spool_id"]
+            self.last_lane_spool[lane.name] = self._lane_state(lane)["spool_id"]
 
     def cmd_AFC_BRIDGE_STATUS(self, gcmd):
         eventtime = self.reactor.monotonic()

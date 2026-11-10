@@ -79,6 +79,29 @@ def test_afc_side_assignment_not_reverted_when_u1_unchanged():
     assert plan_lane(l, LOADED_FEED, ptc(59), 59) == []
 
 
+def test_afc_side_assignment_pushed_to_u1():
+    # The 2026-11-10 Creality tag: U1 has no spool (unknown card), user sets
+    # spool 3 in the AFC panel -> hand it to SpoolLink (binds the card)
+    l = lane(loaded=True, spool_id=3, material="PLA", color="#FF7F37", weight=900)
+    assert plan_lane(l, LOADED_FEED, ptc(0, "PLA", "#FF7F37"), 0,
+                     last_lane_spool=None) == [("push_spool", 3)]
+    # spool changed from another one on the AFC side
+    assert plan_lane(l, LOADED_FEED, ptc(59), 59, last_lane_spool=59) == [("push_spool", 3)]
+
+
+def test_push_not_repeated_once_u1_agrees_or_unchanged():
+    l = lane(loaded=True, spool_id=3, weight=900)
+    # next pass: SpoolLink applied it (ptc 0 -> 3)
+    assert plan_lane(l, LOADED_FEED, ptc(3), 0, last_lane_spool=3) == []
+    # SpoolLink didn't (no Spoolman): no retry loop
+    assert plan_lane(l, LOADED_FEED, ptc(0), 0, last_lane_spool=3) == []
+
+
+def test_u1_change_wins_over_afc_change_in_same_pass():
+    l = lane(loaded=True, spool_id=3, weight=900)
+    assert plan_lane(l, LOADED_FEED, ptc(59), 0, last_lane_spool=79) == [("set_spool", 59)]
+
+
 def test_first_pass_keeps_afc_spool_when_both_set():
     l = lane(loaded=True, spool_id=74, weight=500)
     assert plan_lane(l, LOADED_FEED, ptc(59), None) == []
