@@ -1,0 +1,46 @@
+diff --git a/extras/AFC.py b/extras/AFC.py
+index 9553d15..b4f72eb 100644
+--- a/extras/AFC.py
++++ b/extras/AFC.py
+@@ -374,6 +374,17 @@ class afc:
+         """
+         return hasattr(Printer, "get_snapmaker_config_dir")
+ 
++    def _u1_xy_only_homed(self) -> bool:
++        """
++        U1_AFC: True when X and Y are homed but Z is not (the U1 print start state
++        after "G28 X Y").
++        """
++        try:
++            homed = self.toolhead.get_status(self.reactor.monotonic())['homed_axes']
++        except Exception:
++            return False
++        return 'x' in homed and 'y' in homed and 'z' not in homed
++
+     def register_config_callback(self, option):
+         # Function needed for virtual pins, does nothing
+         return
+@@ -2327,6 +2338,23 @@ class afc:
+                 self.gcode.run_script_from_command(sm_command)
+                 return
+ 
++        # U1_AFC: the U1 print start switches heads right after "G28 X Y", before Z is
++        # homed. Snapmaker's own T(n) only needs X/Y, so hand the switch to it (by the
++        # head the T command is mapped to) instead of refusing the tool change.
++        if self.snapmaker_printer and self._u1_xy_only_homed():
++            cmd = gcmd.get_commandline().split()[0].upper()
++            lane_name = self.tool_cmds.get(cmd) if self.tool_cmds else None
++            lane_obj = self.lanes.get(lane_name) if lane_name else None
++            if lane_obj is not None:
++                th_name = getattr(lane_obj.extruder_obj, 'th_extruder_name', 'extruder') or 'extruder'
++                suffix = th_name[len('extruder'):]
++                index = int(suffix) if suffix.isdigit() else 0
++                renamed = f"_T{index}"
++                if renamed in self.gcode.ready_gcode_handlers:
++                    self.logger.info(f"Z not homed, calling snapmakers T(n) command: {renamed} for {cmd} ({lane_obj.name})")
++                    self.gcode.run_script_from_command(renamed)
++                    return
++
+         # Check if the bypass filament sensor detects filament; if so, abort the tool change.
+         if self._check_bypass(unload=False): return
+ 
