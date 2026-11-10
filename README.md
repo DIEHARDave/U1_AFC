@@ -92,6 +92,12 @@ a spool you set in the AFC panel stays until the U1's changes again.
   preheat, usage per lane matches the slicer
 - Print start with `G28 X Y` + `T0` from head 4, unhomed (`auto_home`):
   full home, then head 1; the whole 2-color print completed
+- 4-color print sent from Snapmaker Orca (cloud/LAN start,
+  `SDCARD_PRINT_FILE_WITH_PARAMETERS`) with Extrusion Flow Calibration on:
+  calibration ran on all four heads (~3.5 min each, via Snapmaker's `_T<n>`),
+  6 tool changes at 4.7-5.5 s, one active-spool write each, completed.
+  Orca's preprocessing dialog stays at 100% after the start (close it; the
+  Device tab works). Not checked yet whether that happens without AFC.
 - Reboot: everything persists (`/oem/.debug`)
 - U1 screen unload/load with an RFID-tagged spool (by hand, before the
   bridge existed)
