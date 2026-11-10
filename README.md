@@ -111,6 +111,9 @@ a spool you set in the AFC panel stays until the U1's changes again.
   Device tab works). Not checked yet whether that happens without AFC.
 - Orca mapping filament 1 (and 3) to head 3: `T0->e2` for that print, head 3
   printed both, AFC's map restored at the end
+- Print started from the U1 screen with its own mapping (filament 1 on
+  head 4, filament 4 on head 2): `T0->e3, T3->e1`, both changes went there,
+  map restored at the end
 - Reboot: everything persists (`/oem/.debug`)
 - U1 screen unload/load with an RFID-tagged spool (by hand, before the
   bridge existed)
@@ -124,7 +127,7 @@ a spool you set in the AFC panel stays until the U1's changes again.
 - Settle time: a 4 s "no spool" gap (tag cleared, rescanned) left the lane
   alone; a lasting change was applied after ~7 s, the rescan ~6 s later
 
-Not yet: runout, a firmware update, `install.sh` on a printer that never had
+Not yet: runout, XYZ calibration, a firmware update, `install.sh` on a printer that never had
 AFC.
 
 ## Known issues
