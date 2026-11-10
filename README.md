@@ -28,7 +28,8 @@ adds what was missing in testing:
   while only X/Y are homed.
 - **PAXX clashes.** Disables the AFC-Lite tweak, points SpoolLink's Klipper
   config at a copy without its `SET_SPOOL_ID` macro (AFC registers
-  `SET_SPOOL_ID` per lane), and turns Klipper's "Invalid extruder name"
+  `SET_SPOOL_ID` per lane; the bridge hands spools set in AFC to SpoolLink,
+  so tags still get bound), and turns Klipper's "Invalid extruder name"
   error into a warning (the same fix as PAXX's `afc` mod).
 
 ## Install
@@ -89,8 +90,12 @@ a spool you set in the AFC panel stays until the U1's changes again.
 - `install.sh` over an existing (manual) install; bridge migration of a
   lane AFC had forgotten (spool 74 imported and marked loaded, no movement)
 
-Not yet: the bridge with a real U1-side load / RFID scan, runout, a firmware
-update, `install.sh` on a printer that never had AFC.
+- Bridge with a real U1-screen load (unknown Creality tag): lane loaded,
+  filament copied, 1000 g; spool set in AFC handed to SpoolLink, tag bound
+  in Spoolman, the next scan resolved to it on its own
+
+Not yet: runout, a firmware update, `install.sh` on a printer that never had
+AFC.
 
 ## Known issues
 
@@ -98,12 +103,16 @@ update, `install.sh` on a printer that never had AFC.
   active spool on head changes, next to AFC; during a change it briefly
   set the old head's spool. Ends right, but usage could land on the wrong
   spool for a moment.
-- **SpoolLink's tag binding is off.** Without its `SET_SPOOL_ID` macro,
-  assigning a spool no longer binds the scanned card UID to it in Spoolman.
 - **AFC's unload is shallow on the U1.** `LANE_UNLOAD` retracts 60 mm out
   of the hotend; the filament stays in the head and the U1 feeder still
   reports it loaded. The AFC panel's unload sends `TOOL_UNLOAD`, which needs
   the printer homed. Use the U1's own unload for spool swaps.
+- The U1 keeps RFID reads in memory only: after a Klipper restart a head
+  has no tag until it is scanned again (`FILAMENT_DT_UPDATE CHANNEL=<n>`, or
+  a load). Assigning a spool then can't bind the tag.
+- During a scan SpoolLink briefly reports no spool for the head; if the
+  bridge polls in that moment it clears the lane and sets it again on the
+  next pass (harmless; a short debounce is planned).
 - AFC's writes to `print_task_config` set the sub-type to `NONE`.
 - `git` isn't on the U1, so AFC's version shows without a hash.
 
