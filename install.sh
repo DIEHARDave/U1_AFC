@@ -64,7 +64,12 @@ if [ -f "$AFC_DIR/.u1_afc_commit" ]; then
 elif [ -f "$AFC_DIR/AFC_COMMIT.txt" ]; then   # early manual install
     current="$(tr -d ' \r\n' < "$AFC_DIR/AFC_COMMIT.txt")"
 fi
-if [ "$current" != "$AFC_COMMIT" ] || [ -n "$TARBALL" ]; then
+# Patch set this U1_AFC version carries; a change means a fresh AFC tree
+# (removing a patch can't be done in place reliably).
+PATCHSET="$(cd "$HERE/patches" 2>/dev/null && ls -1 *.patch 2>/dev/null | tr '\n' ' ' || true)"
+current_patches="(unknown)"
+if [ -f "$AFC_DIR/.u1_afc_patches" ]; then current_patches="$(cat "$AFC_DIR/.u1_afc_patches")"; fi
+if [ "$current" != "$AFC_COMMIT" ] || [ "$current_patches" != "$PATCHSET" ] || [ -n "$TARBALL" ]; then
     tmp="$(mktemp -d /userdata/u1_afc_dl.XXXXXX)"
     if [ -z "$TARBALL" ]; then
         say "Downloading AFC-Klipper-Add-On $AFC_COMMIT"
@@ -81,6 +86,13 @@ if [ "$current" != "$AFC_COMMIT" ] || [ -n "$TARBALL" ]; then
     find "$src" -type f \( -name '*.sh' -o -name '*.py' -o -name '*.cfg' -o -name '*.txt' \) \
         -exec sed -i 's/\r$//' {} +
     echo "$AFC_COMMIT" > "$src/.u1_afc_commit"
+    # U1_AFC patches onto the fresh tree
+    for p in "$HERE"/patches/*.patch; do
+        [ -f "$p" ] || continue
+        say "Applying $(basename "$p")"
+        patch -p1 -d "$src" < "$p" || die "Patch $(basename "$p") failed against AFC $AFC_COMMIT."
+    done
+    printf '%s' "$PATCHSET" > "$src/.u1_afc_patches"
     # Keep the same path: Klipper's extras symlinks point into it.
     rm -rf "$AFC_DIR.old"
     if [ -d "$AFC_DIR" ]; then mv "$AFC_DIR" "$AFC_DIR.old"; fi
@@ -88,38 +100,24 @@ if [ "$current" != "$AFC_COMMIT" ] || [ -n "$TARBALL" ]; then
     rm -rf "$tmp" "$AFC_DIR.old"
     chown -R lava:lava "$AFC_DIR"
 else
-    say "AFC-Klipper-Add-On already at $AFC_COMMIT"
+    say "AFC-Klipper-Add-On already at $AFC_COMMIT (patches: ${PATCHSET:-none})"
 fi
-
-# 3. U1_AFC patches to AFC (marker: every patched file contains "U1_AFC") -----
-for p in "$HERE"/patches/*.patch; do
-    [ -f "$p" ] || continue
-    files="$(grep '^+++ b/' "$p" | sed 's|^+++ b/||; s|\t.*||')"
-    applied=1
-    for f in $files; do grep -q "U1_AFC" "$AFC_DIR/$f" 2>/dev/null || applied=0; done
-    if [ "$applied" = 1 ]; then
-        say "Patch $(basename "$p") already applied"
-    else
-        say "Applying $(basename "$p")"
-        patch -p1 -d "$AFC_DIR" < "$p" || die "Patch $(basename "$p") failed against AFC $AFC_COMMIT."
-    fi
-done
 chown -R lava:lava "$AFC_DIR"
 
-# 4. Klipper extruder.py: AFC's extruder names aren't "extruderN" ------------
+# 3. Klipper extruder.py: AFC's extruder names aren't "extruderN" ------------
 E="$KLIPPY/kinematics/extruder.py"
 if grep -q 'raise ValueError("Invalid extruder name")' "$E"; then
     say "Patching extruder.py (invalid extruder name -> warning)"
     sed -i 's|            raise ValueError("Invalid extruder name")|            logging.warning("Extruder index not found for %s" % (extruder_name,))|' "$E"
 fi
 
-# 5. AFC-Lite off ------------------------------------------------------------
+# 4. AFC-Lite off ------------------------------------------------------------
 if [ -e "$EXT_K/afc.cfg" ] || [ -L "$EXT_K/afc.cfg" ]; then
     say "Disabling AFC-Lite tweak"
     rm -f "$EXT_K/afc.cfg"
 fi
 
-# 6. SpoolLink: its SET_SPOOL_ID macro clashes with AFC's SET_SPOOL_ID --------
+# 5. SpoolLink: its SET_SPOOL_ID macro clashes with AFC's SET_SPOOL_ID --------
 # PAXX's hook re-creates the symlink only when it's missing, so point it at a
 # copy without the macro.
 mkdir -p "$HERE/generated"
@@ -135,11 +133,11 @@ if [ -f "$SPOOLLINK_SRC" ]; then
 fi
 rm -rf "$LAVA/u1_afc"   # early manual-install location of the same file
 
-# 7. Bridge module --------------------------------------------------------------
+# 6. Bridge module --------------------------------------------------------------
 say "Linking u1_afc.py into Klipper extras"
 ln -sfn "$HERE/extras/u1_afc.py" "$KLIPPY/extras/u1_afc.py"
 
-# 8. AFC's own U1 enable (config, include, extras symlinks; restarts Klipper) --
+# 7. AFC's own U1 enable (config, include, extras symlinks; restarts Klipper) --
 say "Running AFC's U1 enable"
 bash "$AFC_DIR/include/U1_extended_firmware_install.sh" -e
 
@@ -148,6 +146,24 @@ if [ ! -f "$CFG/AFC/u1_afc.cfg" ]; then
     chown lava:lava "$CFG/AFC/u1_afc.cfg"
 fi
 chown -R lava:lava "$HERE"
+
+# 8. auto_home: the U1's stock start gcode runs "G28 X Y" and then T0; AFC
+# refuses tool changes until X, Y and Z are homed (and doesn't pause), so the
+# print would run on whichever head was picked last. A value you set is kept.
+python3 - "$CFG/AFC/AFC.cfg" <<'PY'
+import re, sys
+p = sys.argv[1]
+s = open(p).read()
+m = re.search(r"^\[AFC\][^\n]*\n", s, re.M)
+end = re.search(r"^\[", s[m.end():], re.M) if m else None
+section = s[m.end(): m.end() + end.start()] if end else (s[m.end():] if m else "")
+if m and not re.search(r"^\s*auto_home\s*[:=]", section, re.M):
+    line = "auto_home: True                 # U1_AFC: G28 before a tool change when not homed\n"
+    s = s[:m.end()] + line + s[m.end():]
+    open(p, "w").write(s)
+    print(">> Set auto_home: True in AFC.cfg")
+PY
+chown lava:lava "$CFG/AFC/AFC.cfg"
 
 # 9. Restart and report ---------------------------------------------------------
 if [ "$RESTART" = 1 ]; then

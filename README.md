@@ -26,11 +26,10 @@ adds what was missing in testing:
   bridge skips AFC's writes while SpoolLink runs; SpoolLink sets the spool
   of the head on the carriage, which the bridge keeps equal to the AFC lane.
 - **Tool changes before Z is homed.** The U1's start gcode runs `G28 X Y`
-  and then `T0`; AFC refuses tool changes until X, Y and Z are homed, and the
-  print then runs on whichever head was picked last. With
-  [patches/0001](patches/0001-afc-u1-toolchange-before-z-home.patch) AFC hands
-  `T<n>` to Snapmaker's own `_T<n>` (for the head that tool is mapped to)
-  while only X/Y are homed.
+  and then `T0`; AFC refuses tool changes until X, Y and Z are homed (without
+  pausing), and the print then runs on whichever head was picked last.
+  `install.sh` sets `auto_home: True` in `AFC.cfg`, so AFC homes first. The
+  start takes ~8 s longer. A value you set yourself is kept.
 - **PAXX clashes.** Disables the AFC-Lite tweak, points SpoolLink's Klipper
   config at a copy without its `SET_SPOOL_ID` macro (AFC registers
   `SET_SPOOL_ID` per lane; the bridge hands spools set in AFC to SpoolLink,
@@ -52,7 +51,8 @@ bash /home/lava/U1_AFC/install.sh
 Klipper restarts twice (AFC's own enable script, then U1_AFC). Then check
 the lanes with `AFC_BRIDGE_STATUS` in the console. Run `install.sh` again after
 a firmware update (which likely undoes the changes) or to move to a new
-`AFC_COMMIT`. A backup of the files it touches goes to
+`AFC_COMMIT` (AFC is downloaded again when the commit or the patch set
+changes). A backup of the files it touches goes to
 `/userdata/u1_afc_backup/<date>/`.
 
 Lanes are `e0`-`e3` (AFC-Lite: `E0`-`E3`). Restart HelixScreen once if you
@@ -90,7 +90,8 @@ a spool you set in the AFC panel stays until the U1's changes again.
 - PREP, idle `T0`-`T3` (~5 s, pick/park, no feed), `LANE_UNLOAD` + reload
 - 2-color print (T0 then T3 at layer 29): mid-print change 5.2 s with
   preheat, usage per lane matches the slicer
-- Print start with `G28 X Y` + `T0` (patch 0001)
+- Print start with `G28 X Y` + `T0` from head 4, unhomed (`auto_home`):
+  full home, then head 1; the whole 2-color print completed
 - Reboot: everything persists (`/oem/.debug`)
 - U1 screen unload/load with an RFID-tagged spool (by hand, before the
   bridge existed)
@@ -126,8 +127,8 @@ AFC.
 | `install.sh`, `uninstall.sh` | Run on the printer as root |
 | `extras/u1_afc.py` | Bridge module, symlinked into `klippy/extras` |
 | `config/u1_afc.cfg` | Copied to `printer_data/config/AFC/` |
-| `patches/` | Applied to the AFC checkout (marker: `U1_AFC`) |
-| `AFC_COMMIT` | AFC commit the patches are made for |
+| `patches/` | Optional `*.patch` files applied to the fresh AFC tree (none at the moment) |
+| `AFC_COMMIT` | AFC commit U1_AFC is tested with |
 | `tests/` | `python tests/test_plan.py` (bridge decisions, no Klipper) |
 
 GPLv3, like AFC.
