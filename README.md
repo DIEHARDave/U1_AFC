@@ -86,9 +86,11 @@ a spool you set in the AFC panel stays until the U1's changes again.
 - Reboot: everything persists (`/oem/.debug`)
 - U1 screen unload/load with an RFID-tagged spool (by hand, before the
   bridge existed)
+- `install.sh` over an existing (manual) install; bridge migration of a
+  lane AFC had forgotten (spool 74 imported and marked loaded, no movement)
 
-Not yet: the bridge on hardware, runout, a firmware update, `install.sh` on
-a printer that never had AFC.
+Not yet: the bridge with a real U1-side load / RFID scan, runout, a firmware
+update, `install.sh` on a printer that never had AFC.
 
 ## Known issues
 
