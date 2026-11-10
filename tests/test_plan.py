@@ -7,7 +7,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "extras"))
 
-from u1_afc import plan_lane, rgba_to_hex  # noqa: E402
+from u1_afc import Settle, plan_lane, rgba_to_hex  # noqa: E402
 
 LOADED_FEED = {"present": True, "state": "load_finish"}
 EMPTY_LANE = {"loaded": False, "other_loaded": False, "spool_id": None,
@@ -123,6 +123,53 @@ def test_sync_switches():
         ("mark_loaded",)]
     l = lane(loaded=True, spool_id=79, weight=776)
     assert plan_lane(l, LOADED_FEED, ptc(59), 79, sync_spools=False) == []
+
+
+def test_settle():
+    s = Settle(5.0)
+    assert s.update("e3", 3, 0.0) is False      # first sight
+    assert s.update("e3", 3, 4.9) is False
+    assert s.update("e3", 3, 5.0) is True
+    assert s.update("e3", 0, 6.0) is False      # changed: clock restarts
+    assert s.update("e3", 0, 11.0) is True
+    assert Settle(0).update("x", 1, 0.0) is True
+
+
+def _poll(samples, lane_state, settle_time=5.0, interval=2.0):
+    """Drive Settle + plan_lane like U1AFC.sync: samples = [(t, ptc_spool)]."""
+    s = Settle(settle_time)
+    last = None
+    done = []
+    for t, spool in samples:
+        p = ptc(spool)
+        if not s.update("e3", (spool, p["material"], p["color"], "load_finish"), t):
+            continue
+        acts = plan_lane(lane_state, LOADED_FEED, p, last, last_lane_spool=3)
+        done.extend(acts)
+        last = spool
+    return done
+
+
+def test_scan_blip_ignored():
+    # 2026-11-10 rescan of a bound tag: 3 -> 0 for 0.25 s -> 3
+    l = lane(loaded=True, spool_id=3, weight=990)
+    samples = [(0, 3), (2, 3), (4, 3), (6, 3),     # settled on 3
+               (8, 0),                             # scan starts (poll lands in the blip)
+               (10, 3), (12, 3), (14, 3), (16, 3)]
+    assert _poll(samples, l) == []
+
+
+def test_real_change_still_applied_after_settle():
+    l = lane(loaded=True, spool_id=3, weight=990)
+    samples = [(0, 3), (2, 3), (4, 3), (6, 3),
+               (8, 59), (10, 59), (12, 59), (14, 59)]
+    assert _poll(samples, l) == [("set_spool", 59)]
+
+
+def test_unknown_tag_clears_after_settle():
+    l = lane(loaded=True, spool_id=3, weight=990)
+    samples = [(0, 3), (2, 3), (4, 3), (6, 3)] + [(t, 0) for t in range(8, 20, 2)]
+    assert _poll(samples, l)[0] == ("clear_spool",)
 
 
 if __name__ == "__main__":

@@ -35,6 +35,25 @@ def rgba_to_hex(rgba):
 UNSET = object()
 
 
+class Settle:
+    """
+    Tells when a value has held still for settle_time seconds. A tag scan
+    makes SpoolLink report "no spool" for a moment before the scanned spool;
+    acting on that would clear the lane and set it again.
+    """
+    def __init__(self, settle_time):
+        self.settle_time = settle_time
+        self.seen = {}
+
+    def update(self, key, value, now):
+        """:return: True once value has been unchanged for settle_time"""
+        prev = self.seen.get(key)
+        if prev is None or prev[0] != value:
+            self.seen[key] = (value, now)
+            return self.settle_time <= 0
+        return now - prev[1] >= self.settle_time
+
+
 def plan_lane(lane, feed, ptc, last_ptc_spool, default_weight=1000.0,
               sync_loads=True, sync_spools=True, last_lane_spool=UNSET):
     """
@@ -122,6 +141,7 @@ class U1AFC:
         self.default_weight = config.getfloat("default_weight", 1000., minval=0.)
         self.poll_interval = config.getfloat("poll_interval", 2., minval=0.5)
         self.start_delay = config.getfloat("start_delay", 10., minval=0.)
+        self.settle = Settle(config.getfloat("settle_time", 5., minval=0.))
         # Who sets Moonraker's active spool. SpoolLink follows the head on the
         # carriage and print_task_config (which this bridge keeps equal to the
         # AFC lanes); AFC writing too made them race during tool changes.
@@ -313,6 +333,12 @@ class U1AFC:
                 continue
             state = self._lane_state(lane)
             feed = self._feed_state(index, eventtime)
+            settled = self.settle.update(
+                lane.name, (ptc["spool_id"], ptc["material"], ptc["color"],
+                            feed["state"] if feed else None), eventtime)
+            if not settled:
+                out.append((lane, index, state, feed, ptc, None))
+                continue
             actions = plan_lane(state, feed, ptc, self.last_ptc_spool.get(lane.name),
                                 self.default_weight, self.sync_loads, self.sync_spools,
                                 self.last_lane_spool.get(lane.name, UNSET))
@@ -323,6 +349,8 @@ class U1AFC:
         eventtime = eventtime or self.reactor.monotonic()
         afc, passes = self._passes(eventtime)
         for lane, index, state, feed, ptc, actions in passes:
+            if actions is None:
+                continue    # U1 side still changing; look again next pass
             if actions:
                 msg = "U1_AFC: %s (head %d): %s" % (
                     lane.name, index + 1, ", ".join(_fmt(a) for a in actions))
@@ -354,7 +382,8 @@ class U1AFC:
                 lane.name, index + 1, state["loaded"], state["spool_id"], state["color"],
                 ptc["spool_id"], ptc["material"], ptc["color"],
                 feed["state"] if feed else "?",
-                ", ".join(_fmt(a) for a in actions) or "in step"))
+                "waiting for the U1 to settle" if actions is None
+                else (", ".join(_fmt(a) for a in actions) or "in step")))
         gcmd.respond_info("\n".join(lines))
 
     def cmd_AFC_BRIDGE_SYNC(self, gcmd):

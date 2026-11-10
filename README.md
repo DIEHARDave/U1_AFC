@@ -76,6 +76,7 @@ bash /home/lava/U1_AFC/uninstall.sh --no-afc-lite --remove-afc
 | `default_weight` | 1000 | Weight (g) for a loaded lane without a Spoolman spool |
 | `poll_interval` | 2 | Seconds between checks (only while AFC is idle and not printing) |
 | `start_delay` | 10 | Seconds after Klipper start before the first check |
+| `settle_time` | 5 | Seconds the U1's values for a head must hold still before the bridge acts (a tag scan reports "no spool" for a moment) |
 | `active_spool` | spoollink | Who sets Moonraker's active spool: `spoollink` (AFC's writes skipped while SpoolLink runs) or `afc` |
 
 Commands: `AFC_BRIDGE_STATUS` (each lane: AFC vs U1, what the bridge would
@@ -100,6 +101,8 @@ a spool you set in the AFC panel stays until the U1's changes again.
   filament copied, 1000 g; spool set in AFC handed to SpoolLink, tag bound
   in Spoolman, the next scan resolved to it on its own
 - Active spool: T3→T1→T0→T3 with one SpoolLink write per change, no flip
+- Settle time: a 4 s "no spool" gap (tag cleared, rescanned) left the lane
+  alone; a lasting change was applied after ~7 s, the rescan ~6 s later
 
 Not yet: runout, a firmware update, `install.sh` on a printer that never had
 AFC.
@@ -113,9 +116,6 @@ AFC.
 - The U1 keeps RFID reads in memory only: after a Klipper restart a head
   has no tag until it is scanned again (`FILAMENT_DT_UPDATE CHANNEL=<n>`, or
   a load). Assigning a spool then can't bind the tag.
-- During a scan SpoolLink briefly reports no spool for the head; if the
-  bridge polls in that moment it clears the lane and sets it again on the
-  next pass (harmless; a short debounce is planned).
 - AFC's writes to `print_task_config` set the sub-type to `NONE`.
 - `git` isn't on the U1, so AFC's version shows without a hash.
 
