@@ -21,6 +21,7 @@
 # This file may be distributed under the terms of the GNU GPLv3 license.
 
 import logging
+import os
 
 LOAD_FINISHED = "load_finish"
 
@@ -52,6 +53,35 @@ class Settle:
             self.seen[key] = (value, now)
             return self.settle_time <= 0
         return now - prev[1] >= self.settle_time
+
+
+def plan_tool_map(map_table, tool_cmds, lane_heads):
+    """
+    Turn the U1's extruder_map_table (filament T<i> -> head index, set by
+    Snapmaker Orca or the U1 screen at print start) into AFC tool_cmds
+    entries. Pure function (no Klipper).
+
+    :param map_table: list of head indexes, one per logical tool
+    :param tool_cmds: AFC's current {"T0": lane_name, ...}
+    :param lane_heads: {lane_name: head index}
+    :return: {"T<i>": lane_name} for the tools that change (several tools
+             may go to one lane; tools AFC doesn't have are left out)
+    """
+    by_head = {}
+    for name, head in sorted(lane_heads.items()):
+        by_head.setdefault(head, name)
+    changes = {}
+    for i, head in enumerate(map_table or []):
+        tool = "T%d" % (i,)
+        if tool not in tool_cmds:
+            continue
+        try:
+            lane = by_head.get(int(head))
+        except (TypeError, ValueError):
+            continue
+        if lane is not None and tool_cmds[tool] != lane:
+            changes[tool] = lane
+    return changes
 
 
 def plan_lane(lane, feed, ptc, last_ptc_spool, default_weight=1000.0,
@@ -150,6 +180,21 @@ class U1AFC:
                                              "spoollink")
         self._afc_set_active_spool = None
         self.skipped_active_spool = 0
+        # Who writes a spool's filament info (type, sub-type, vendor, color)
+        # into print_task_config. AFC writes Spoolman's raw material ("PLA+")
+        # and sub-type NONE over SpoolLink's U1 values ("PLA"), and Orca then
+        # won't map a PLA filament to that head.
+        self.spool_info = config.getchoice("spool_info",
+                                           {"spoollink": "spoollink", "afc": "afc"},
+                                           "spoollink")
+        self._afc_set_filament_params = None
+        self.skipped_filament_params = 0
+        # Follow the slicer / U1 screen filament -> head mapping for a print
+        self.follow_print_map = config.getboolean("follow_print_map", True)
+        self._orig_print_file = None
+        self.saved_tool_cmds = None     # AFC's map while a print map is applied
+        self.applied_map = {}
+        self.map_applied_at = 0.
         self.last_ptc_spool = {}
         self.last_lane_spool = {}
         self.last_actions = []
@@ -165,15 +210,102 @@ class U1AFC:
 
     def _handle_ready(self):
         self._hook_active_spool()
+        self._hook_filament_params()
+        self._hook_print_file()
         self.timer = self.reactor.register_timer(
             self._timer_cb, self.reactor.monotonic() + self.start_delay)
 
     def _timer_cb(self, eventtime):
         try:
+            self._check_restore_map(eventtime)
+        except Exception:
+            logging.exception("u1_afc: restoring the tool map failed")
+        try:
             self.sync()
         except Exception:
             logging.exception("u1_afc: sync failed")
         return eventtime + self.poll_interval
+
+    # Print tool map ---------------------------------------------------------
+    # Snapmaker Orca and the U1 screen start prints with
+    # SDCARD_PRINT_FILE_WITH_PARAMETERS MAP_TABLE=..., which lands in
+    # print_task_config.extruder_map_table. Snapmaker's T<n> reads it; AFC's
+    # T<n> uses its own tool_cmds, so the mapping was ignored. For the length
+    # of such a print, point AFC's tool_cmds at the mapped heads. lane.map
+    # (what the panels show) and AFC.var stay as they are.
+
+    def _hook_print_file(self):
+        if not self.follow_print_map or self._orig_print_file is not None:
+            return
+        gcode = self.printer.lookup_object("gcode")
+        name = "SDCARD_PRINT_FILE_WITH_PARAMETERS"
+        original = gcode.register_command(name, None)
+        if original is None:
+            return
+        self._orig_print_file = original
+
+        def print_file(gcmd):
+            self._restore_map("new print")
+            original(gcmd)      # sets print_task_config, then starts the file
+            try:
+                self._apply_print_map()
+            except Exception:
+                logging.exception("u1_afc: applying the print tool map failed")
+        gcode.register_command(name, print_file,
+                               desc="Start a print with U1 parameters (U1_AFC: follows MAP_TABLE)")
+
+    def _apply_print_map(self):
+        afc = self._afc()
+        ptc = self.printer.lookup_object("print_task_config", None)
+        if afc is None or ptc is None:
+            return
+        eventtime = self.reactor.monotonic()
+        table = ptc.get_status(eventtime).get("extruder_map_table") or []
+        heads = {}
+        for lane in afc.lanes.values():
+            try:
+                heads[lane.name] = lane.lane_extruder_index
+            except Exception:
+                continue
+        changes = plan_tool_map(table, afc.tool_cmds, heads)
+        if not changes:
+            return
+        self.saved_tool_cmds = dict(afc.tool_cmds)
+        afc.tool_cmds.update(changes)
+        self.applied_map = changes
+        self.map_applied_at = eventtime
+        msg = "U1_AFC: print tool map " + ", ".join(
+            "%s->%s" % (t, changes[t]) for t in sorted(changes))
+        logging.info(msg)
+        try:
+            afc.logger.info(msg)
+        except Exception:
+            pass
+
+    def _restore_map(self, why):
+        if self.saved_tool_cmds is None:
+            return
+        afc = self._afc()
+        if afc is not None:
+            for tool, lane in self.applied_map.items():
+                # leave entries alone that something else changed meanwhile
+                if afc.tool_cmds.get(tool) == lane:
+                    afc.tool_cmds[tool] = self.saved_tool_cmds.get(tool, lane)
+            try:
+                afc.logger.info("U1_AFC: tool map restored (%s)" % (why,))
+            except Exception:
+                pass
+        logging.info("u1_afc: tool map restored (%s)", why)
+        self.saved_tool_cmds = None
+        self.applied_map = {}
+
+    def _check_restore_map(self, eventtime):
+        if self.saved_tool_cmds is None or eventtime - self.map_applied_at < 10.:
+            return
+        ps = self.printer.lookup_object("print_stats", None)
+        state = ps.get_status(eventtime).get("state") if ps is not None else None
+        if state not in ("printing", "paused"):
+            self._restore_map("print %s" % (state,))
 
     # Active spool ---------------------------------------------------------
 
@@ -181,6 +313,11 @@ class U1AFC:
         webhooks = self.printer.lookup_object("webhooks", None)
         methods = getattr(webhooks, "_remote_methods", None) or {}
         return bool(methods.get("spoollink_resolve_spool"))
+
+    def _spoollink_enabled(self):
+        # AFC's PREP can run before Moonraker (and SpoolLink) has connected;
+        # PAXX links spoollink.cfg into extended/klipper while it is enabled.
+        return os.path.exists("/home/lava/printer_data/config/extended/klipper/spoollink.cfg")
 
     def _hook_active_spool(self):
         if self.active_spool != "spoollink":
@@ -202,6 +339,31 @@ class U1AFC:
             original(ID)
         spool.set_active_spool = set_active_spool
         logging.info("u1_afc: SpoolLink owns the active spool (AFC's writes skipped while it runs)")
+
+    def _hook_filament_params(self):
+        if self.spool_info != "spoollink":
+            return
+        spool = getattr(self._afc(), "spool", None)
+        if spool is None or self._afc_set_filament_params is not None:
+            return
+        original = getattr(spool, "set_snapmaker_filament_params", None)
+        if original is None:
+            return
+        self._afc_set_filament_params = original
+
+        def set_snapmaker_filament_params(lane):
+            # A lane with a Spoolman spool: SpoolLink writes that spool's info
+            # (the bridge hands it spools set in AFC). Lanes without a spool:
+            # AFC's values are the only ones, keep writing them.
+            if getattr(lane, "spool_id", None) and (
+                    self._spoollink_present() or self._spoollink_enabled()):
+                self.skipped_filament_params += 1
+                logging.debug("u1_afc: AFC filament info for %s left to SpoolLink",
+                              getattr(lane, "name", "?"))
+                return
+            original(lane)
+        spool.set_snapmaker_filament_params = set_snapmaker_filament_params
+        logging.info("u1_afc: SpoolLink owns filament info of heads with a spool")
 
     # Reading state -------------------------------------------------------
 
@@ -396,6 +558,9 @@ class U1AFC:
                 "active_spool_writer": ("spoollink" if self.active_spool == "spoollink"
                                         and self._spoollink_present() else "afc"),
                 "afc_active_spool_skipped": self.skipped_active_spool,
+                "print_tool_map": dict(self.applied_map),
+                "spool_info": self.spool_info,
+                "afc_filament_info_skipped": self.skipped_filament_params,
                 "last_actions": list(self.last_actions)}
 
 

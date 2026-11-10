@@ -30,6 +30,15 @@ adds what was missing in testing:
   pausing), and the print then runs on whichever head was picked last.
   `install.sh` sets `auto_home: True` in `AFC.cfg`, so AFC homes first. The
   start takes ~8 s longer. A value you set yourself is kept.
+- **Filament-to-head mapping from Snapmaker Orca / the U1 screen.** They
+  start prints with a `MAP_TABLE` (e.g. filament 1 on head 3), which only
+  Snapmaker's own `T<n>` reads. For such a print the bridge points AFC's tool
+  map at the chosen heads, and puts it back when the print ends. The AFC
+  panels keep showing the lanes' own `T<n>`.
+- **One writer of the heads' filament info.** AFC wrote Spoolman's raw
+  material (`PLA+`) and sub-type `NONE` over SpoolLink's U1 values (`PLA`)
+  after every Klipper restart, and Snapmaker Orca then refused to map a PLA
+  filament to that head. SpoolLink now writes it for heads with a spool.
 - **PAXX clashes.** Disables the AFC-Lite tweak, points SpoolLink's Klipper
   config at a copy without its `SET_SPOOL_ID` macro (AFC registers
   `SET_SPOOL_ID` per lane; the bridge hands spools set in AFC to SpoolLink,
@@ -78,6 +87,8 @@ bash /home/lava/U1_AFC/uninstall.sh --no-afc-lite --remove-afc
 | `start_delay` | 10 | Seconds after Klipper start before the first check |
 | `settle_time` | 5 | Seconds the U1's values for a head must hold still before the bridge acts (a tag scan reports "no spool" for a moment) |
 | `active_spool` | spoollink | Who sets Moonraker's active spool: `spoollink` (AFC's writes skipped while SpoolLink runs) or `afc` |
+| `follow_print_map` | True | Prints started from Snapmaker Orca or the U1 screen: send each filament to the head chosen there (`MAP_TABLE`), for that print only |
+| `spool_info` | spoollink | Who writes a spool's type, sub-type, vendor and color into `print_task_config`: `spoollink` (AFC skipped for heads with a Spoolman spool) or `afc` |
 
 Commands: `AFC_BRIDGE_STATUS` (each lane: AFC vs U1, what the bridge would
 change), `AFC_BRIDGE_SYNC` (check now).
@@ -98,6 +109,8 @@ a spool you set in the AFC panel stays until the U1's changes again.
   6 tool changes at 4.7-5.5 s, one active-spool write each, completed.
   Orca's preprocessing dialog stays at 100% after the start (close it; the
   Device tab works). Not checked yet whether that happens without AFC.
+- Orca mapping filament 1 (and 3) to head 3: `T0->e2` for that print, head 3
+  printed both, AFC's map restored at the end
 - Reboot: everything persists (`/oem/.debug`)
 - U1 screen unload/load with an RFID-tagged spool (by hand, before the
   bridge existed)

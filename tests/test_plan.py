@@ -7,7 +7,28 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "extras"))
 
-from u1_afc import Settle, plan_lane, rgba_to_hex  # noqa: E402
+from u1_afc import Settle, plan_lane, plan_tool_map, rgba_to_hex  # noqa: E402
+
+TOOLS = {"T0": "e0", "T1": "e1", "T2": "e2", "T3": "e3"}
+HEADS = {"e0": 0, "e1": 1, "e2": 2, "e3": 3}
+
+
+def test_tool_map_identity_changes_nothing():
+    assert plan_tool_map([0, 1, 2, 3] + [0] * 28, TOOLS, HEADS) == {}
+
+
+def test_tool_map_orca_filament1_to_head3():
+    # 2026-11-10 Orca print: MAP_TABLE [[0,2],[1,1],[2,2],[3,3]]
+    assert plan_tool_map([2, 1, 2, 3] + [0] * 28, TOOLS, HEADS) == {"T0": "e2"}
+
+
+def test_tool_map_swap_and_missing_tools():
+    assert plan_tool_map([3, 2, 1, 0], TOOLS, HEADS) == {
+        "T0": "e3", "T1": "e2", "T2": "e1", "T3": "e0"}
+    # tools AFC doesn't have, bad values and heads without a lane are skipped
+    assert plan_tool_map([0, 1, 2, 3, 1, "x"], TOOLS, HEADS) == {}
+    assert plan_tool_map([5, 1], TOOLS, HEADS) == {}
+    assert plan_tool_map(None, TOOLS, HEADS) == {}
 
 LOADED_FEED = {"present": True, "state": "load_finish"}
 EMPTY_LANE = {"loaded": False, "other_loaded": False, "spool_id": None,
