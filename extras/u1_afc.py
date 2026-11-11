@@ -148,8 +148,12 @@ def plan_lane(lane, feed, ptc, last_ptc_spool, default_weight=1000.0,
             # Spool assigned on the AFC side (panel, SET_SPOOL_ID): hand it to
             # the U1 so both agree and SpoolLink binds the scanned tag to it.
             actions.append(("push_spool", lane_spool))
-        elif last_ptc_spool is None and lane_spool is None and ptc_spool > 0:
-            # First pass after start: migrate a spool AFC doesn't know yet
+        elif lane_spool is None and ptc_spool > 0 and (
+                last_ptc_spool is None
+                or (not lane.get("material") and not lane.get("color"))):
+            # First pass after start: migrate a spool AFC doesn't know yet.
+            # Later: the lane lost everything (AFC clears a lane on runout)
+            # while the head still has a spool -> take it back.
             actions.append(("set_spool", ptc_spool))
         elif (lane_spool is None and ptc_spool <= 0 and has_ptc_filament
               and not lane.get("material") and not lane.get("color")):
@@ -592,6 +596,11 @@ class U1AFC:
                 continue
             if kind == "set_spool":
                 afc.spool.set_spoolID(lane, action[1], save_vars=False)
+                if self._spoollink_present():
+                    # AFC may have written this head's info while the lane was
+                    # empty (type NONE, white); SpoolLink only rewrites it when
+                    # the spool changes. Same spool and card: no-op otherwise.
+                    self._push_spool(index, action[1])
             elif kind == "clear_spool":
                 lane.spool_id = None
                 afc.spool.clear_values(lane)

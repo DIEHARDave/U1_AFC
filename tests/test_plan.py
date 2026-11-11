@@ -133,6 +133,19 @@ def test_first_pass_migrates_spool_into_loaded_empty_lane():
     assert plan_lane(l, LOADED_FEED, ptc(59), None) == [("set_spool", 59)]
 
 
+def test_lane_emptied_by_afc_takes_spool_back_from_u1():
+    # 2026-11-11 runout: AFC cleared e3 (no spool, material, color), the U1
+    # still had spool 3 after the reload scan
+    l = lane(loaded=True, weight=1000)
+    assert plan_lane(l, LOADED_FEED, ptc(3), 3, last_lane_spool=None) == [("set_spool", 3)]
+
+
+def test_lane_without_spool_but_with_filament_left_alone():
+    # spool cleared in the AFC panel, filament kept: not reverted
+    l = lane(loaded=True, material="PLA", color="#FF7F37", weight=1000)
+    assert plan_lane(l, LOADED_FEED, ptc(3), 3, last_lane_spool=None) == []
+
+
 def test_no_spool_lane_with_zero_weight_gets_default():
     l = lane(loaded=True, material="PLA", color="#003776", weight=0)
     assert plan_lane(l, LOADED_FEED, ptc(0, "PLA", "#003776"), 0) == [("set_weight", 1000.0)]
