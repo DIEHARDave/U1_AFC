@@ -60,10 +60,16 @@ As root on the printer, idle. The printer downloads AFC from GitHub at the
 commit in [AFC_COMMIT](AFC_COMMIT) (or pass `--afc-tarball FILE`).
 
 ```sh
-# from a PC: copy this folder to the printer
-tar -czf - --exclude=.git U1_AFC | ssh root@<u1-ip> 'tar -xzf - -C /home/lava'
-# on the printer
+# on the printer (ssh root@<u1-ip>): download and install
+cd /home/lava && rm -rf U1_AFC && mkdir U1_AFC &&   curl -fsSL https://codeload.github.com/DIEHARDave/U1_AFC/tar.gz/main   | tar -xzf - -C U1_AFC --strip-components=1
 bash /home/lava/U1_AFC/install.sh
+```
+
+Or from a PC with a clone of this repo:
+
+```sh
+tar -czf - --exclude=.git U1_AFC | ssh root@<u1-ip> 'tar -xzf - -C /home/lava'
+ssh root@<u1-ip> bash /home/lava/U1_AFC/install.sh
 ```
 
 Klipper restarts twice (AFC's own enable script, then U1_AFC). Then check
