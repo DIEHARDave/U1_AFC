@@ -124,6 +124,8 @@ a spool you set in the AFC panel stays until the U1's changes again.
   printed both, AFC's map restored at the end
 - Feeder runout (filament cut before the side feeder of the head in use, no
   runout lane): paused 3 s after the feeder went empty, AFC's runout message
+- Head-sensor runout (cut just above the head, feeder still full): bridge
+  handed it to AFC, paused within a second; resume after a runout pause OK
 - Print started from the U1 screen with its own mapping (filament 1 on
   head 4, filament 4 on head 2): `T0->e3, T3->e1`, both changes went there,
   map restored at the end
@@ -140,7 +142,7 @@ a spool you set in the AFC panel stays until the U1's changes again.
 - Settle time: a 4 s "no spool" gap (tag cleared, rescanned) left the lane
   alone; a lasting change was applied after ~7 s, the rescan ~6 s later
 
-Not yet: head-sensor runout with the fix, runout lane switching, XYZ calibration, a firmware update, `install.sh` on a printer that never had
+Not yet: runout lane switching, XYZ calibration, a firmware update, `install.sh` on a printer that never had
 AFC.
 
 ## Known issues
