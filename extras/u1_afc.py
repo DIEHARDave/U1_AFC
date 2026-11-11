@@ -189,6 +189,16 @@ class U1AFC:
                                            "spoollink")
         self._afc_set_filament_params = None
         self.skipped_filament_params = 0
+        # Make AFC act on head (filament_motion_sensor) runouts; see _tool_runout
+        self.fix_tool_runout = config.getboolean("fix_tool_runout", True)
+        self.tool_runouts = 0
+        # Like the stock U1: the feeder of the head in use runs empty and there
+        # is nothing to switch to (no runout lane) -> pause right away, with the
+        # tube still full. With a runout lane, wait for the head sensor.
+        self.pause_on_feeder_runout = config.getboolean("pause_on_feeder_runout", True)
+        self.feeder_empty_seen = {}     # lane -> consecutive empty polls
+        self.feeder_runout_done = set()
+        self.feeder_runouts = 0
         # Follow the slicer / U1 screen filament -> head mapping for a print
         self.follow_print_map = config.getboolean("follow_print_map", True)
         self._orig_print_file = None
@@ -211,6 +221,7 @@ class U1AFC:
     def _handle_ready(self):
         self._hook_active_spool()
         self._hook_filament_params()
+        self._hook_tool_runout()
         self._hook_print_file()
         self.timer = self.reactor.register_timer(
             self._timer_cb, self.reactor.monotonic() + self.start_delay)
@@ -221,10 +232,128 @@ class U1AFC:
         except Exception:
             logging.exception("u1_afc: restoring the tool map failed")
         try:
+            self._check_feeder_runout(eventtime)
+        except Exception:
+            logging.exception("u1_afc: feeder runout check failed")
+        try:
             self.sync()
         except Exception:
             logging.exception("u1_afc: sync failed")
         return eventtime + self.poll_interval
+
+    # Head runout ------------------------------------------------------------
+    # AFC takes over each head's filament_motion_sensor (pause_on_runout off,
+    # its own _runout_event_handler), but its handler only acts on lanes in
+    # state TOOLED/LOADED. U1 tool changes only swap heads and never set
+    # TOOLED, so every lane stays NONE and a runout was ignored: no pause at
+    # all. While the runout is handled, the bridge gives the lane on that
+    # head the TOOLED state AFC expects; AFC then pauses (or switches to the
+    # lane's runout lane).
+
+    def _hook_tool_runout(self):
+        if not self.fix_tool_runout:
+            return
+        afc = self._afc()
+        if afc is None:
+            return
+        done = set()
+        for lane in afc.lanes.values():
+            ext = getattr(lane, "extruder_obj", None)
+            sensor = getattr(ext, "fila_tool_start", None)
+            helper = getattr(sensor, "runout_helper", None)
+            if ext is None or helper is None or id(ext) in done:
+                continue
+            original = getattr(helper, "_runout_event_handler", None)
+            if original is None or getattr(original, "_u1_afc", False):
+                continue
+            done.add(id(ext))
+
+            def handler(eventtime, ext=ext, original=original):
+                self._tool_runout(ext, eventtime, original)
+            handler._u1_afc = True
+            helper._runout_event_handler = handler
+        if done:
+            logging.info("u1_afc: head runout handling fixed for %d extruders", len(done))
+
+    def _tool_runout(self, ext, eventtime, original):
+        afc = self._afc()
+        lane = afc.lanes.get(getattr(ext, "lane_loaded", None) or "") if afc else None
+        fixed = None
+        if lane is not None and lane.tool_loaded:
+            try:
+                from extras.AFC_lane import AFCLaneState
+            except ImportError:
+                AFCLaneState = None
+            if AFCLaneState is not None and lane.status not in (
+                    AFCLaneState.TOOLED, AFCLaneState.LOADED):
+                fixed = lane.status
+                lane.status = AFCLaneState.TOOLED
+        self.tool_runouts += 1
+        msg = "U1_AFC: runout on %s (%s)" % (
+            getattr(ext, "name", "?"), lane.name if lane is not None else "no lane loaded")
+        logging.info(msg)
+        try:
+            afc.logger.info(msg)
+        except Exception:
+            pass
+        try:
+            original(eventtime)
+        finally:
+            # AFC sets NONE itself when it acts; put back what was there if not
+            if fixed is not None and lane.status == AFCLaneState.TOOLED:
+                lane.status = fixed
+
+    def _check_feeder_runout(self, eventtime):
+        if not self.pause_on_feeder_runout:
+            return
+        ps = self.printer.lookup_object("print_stats", None)
+        if ps is None or ps.get_status(eventtime).get("state") != "printing":
+            if ps is not None and ps.get_status(eventtime).get("state") != "paused":
+                self.feeder_runout_done.clear()
+            self.feeder_empty_seen.clear()
+            return
+        afc = self._afc()
+        if afc is None or afc.in_toolchange or getattr(afc, "error_state", False):
+            return
+        toolhead = self.printer.lookup_object("toolhead")
+        active = toolhead.get_extruder().get_name()
+        for lane in afc.lanes.values():
+            ext = getattr(lane, "extruder_obj", None)
+            if (ext is None or ext.lane_loaded != lane.name or not lane.tool_loaded
+                    or getattr(ext, "th_extruder_name", None) != active):
+                self.feeder_empty_seen.pop(lane.name, None)
+                continue
+            try:
+                feed = self._feed_state(lane.lane_extruder_index, eventtime)
+            except Exception:
+                feed = None
+            if feed is None or feed.get("present"):
+                self.feeder_empty_seen.pop(lane.name, None)
+                self.feeder_runout_done.discard(lane.name)
+                continue
+            if lane.runout_lane is not None or lane.name in self.feeder_runout_done:
+                continue    # a runout lane takes over at the head sensor
+            n = self.feeder_empty_seen.get(lane.name, 0) + 1
+            self.feeder_empty_seen[lane.name] = n
+            if n < 2:       # two polls in a row (~2 s)
+                continue
+            self.feeder_runout_done.add(lane.name)
+            self.feeder_runouts += 1
+            msg = "U1_AFC: feeder of %s (head %d) ran empty, no runout lane: pausing" % (
+                lane.name, lane.lane_extruder_index + 1)
+            logging.info(msg)
+            try:
+                afc.logger.info(msg)
+            except Exception:
+                pass
+            self.reactor.register_callback(lambda e, lane=lane: self._pause_runout(lane))
+
+    def _pause_runout(self, lane):
+        afc = self._afc()
+        if afc is None or afc.in_toolchange or getattr(afc, "error_state", False):
+            return
+        # AFC's own runout pause: pause, save position, "Runout triggered for lane"
+        lane._perform_pause_runout()
 
     # Print tool map ---------------------------------------------------------
     # Snapmaker Orca and the U1 screen start prints with
@@ -561,6 +690,8 @@ class U1AFC:
                 "print_tool_map": dict(self.applied_map),
                 "spool_info": self.spool_info,
                 "afc_filament_info_skipped": self.skipped_filament_params,
+                "tool_runouts": self.tool_runouts,
+                "feeder_runouts": self.feeder_runouts,
                 "last_actions": list(self.last_actions)}
 
 

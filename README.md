@@ -39,6 +39,15 @@ adds what was missing in testing:
   material (`PLA+`) and sub-type `NONE` over SpoolLink's U1 values (`PLA`)
   after every Klipper restart, and Snapmaker Orca then refused to map a PLA
   filament to that head. SpoolLink now writes it for heads with a spool.
+- **Runout.** With AFC installed a U1 had no runout protection at all: AFC
+  takes over the head sensors (and turns Snapmaker's pause off), but only
+  acts on lanes in state `TOOLED`, which U1 lanes never reach. The bridge
+  fixes that (`fix_tool_runout`), and, like the stock U1 without a spool to
+  refill from, pauses as soon as the feeder of the head in use runs empty
+  when its lane has no runout lane (`pause_on_feeder_runout`). With a runout
+  lane (`SET_RUNOUT`) AFC waits for the head sensor and switches (untested).
+  After a runout pause the leftover piece is past the feeder; the U1's unload
+  can't pull it out of the tube, so take it out by hand.
 - **PAXX clashes.** Disables the AFC-Lite tweak, points SpoolLink's Klipper
   config at a copy without its `SET_SPOOL_ID` macro (AFC registers
   `SET_SPOOL_ID` per lane; the bridge hands spools set in AFC to SpoolLink,
@@ -89,6 +98,8 @@ bash /home/lava/U1_AFC/uninstall.sh --no-afc-lite --remove-afc
 | `active_spool` | spoollink | Who sets Moonraker's active spool: `spoollink` (AFC's writes skipped while SpoolLink runs) or `afc` |
 | `follow_print_map` | True | Prints started from Snapmaker Orca or the U1 screen: send each filament to the head chosen there (`MAP_TABLE`), for that print only |
 | `spool_info` | spoollink | Who writes a spool's type, sub-type, vendor and color into `print_task_config`: `spoollink` (AFC skipped for heads with a Spoolman spool) or `afc` |
+| `fix_tool_runout` | True | Make AFC act on head-sensor runouts (it ignores them on the U1) |
+| `pause_on_feeder_runout` | True | Pause when the feeder of the head in use runs empty and its lane has no runout lane |
 
 Commands: `AFC_BRIDGE_STATUS` (each lane: AFC vs U1, what the bridge would
 change), `AFC_BRIDGE_SYNC` (check now).
@@ -111,6 +122,8 @@ a spool you set in the AFC panel stays until the U1's changes again.
   Device tab works). Not checked yet whether that happens without AFC.
 - Orca mapping filament 1 (and 3) to head 3: `T0->e2` for that print, head 3
   printed both, AFC's map restored at the end
+- Feeder runout (filament cut before the side feeder of the head in use, no
+  runout lane): paused 3 s after the feeder went empty, AFC's runout message
 - Print started from the U1 screen with its own mapping (filament 1 on
   head 4, filament 4 on head 2): `T0->e3, T3->e1`, both changes went there,
   map restored at the end
@@ -127,7 +140,7 @@ a spool you set in the AFC panel stays until the U1's changes again.
 - Settle time: a 4 s "no spool" gap (tag cleared, rescanned) left the lane
   alone; a lasting change was applied after ~7 s, the rescan ~6 s later
 
-Not yet: runout, XYZ calibration, a firmware update, `install.sh` on a printer that never had
+Not yet: head-sensor runout with the fix, runout lane switching, XYZ calibration, a firmware update, `install.sh` on a printer that never had
 AFC.
 
 ## Known issues
