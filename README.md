@@ -149,6 +149,13 @@ a spool you set in the AFC panel stays until the U1's changes again.
 Not yet: runout lane switching, a firmware update, `install.sh` on a printer that never had
 AFC.
 
+## Upstream AFC issues
+
+Bugs and gaps in AFC itself that U1_AFC works around for now are listed in
+[docs/upstream.md](docs/upstream.md), with their upstream status (for example
+the head-runout bug, not reported yet, and the `auto_home` fix,
+[PR #902](https://github.com/AFCProject/AFC-Klipper-Add-On/pull/902)).
+
 ## Known issues
 
 - **AFC's unload is shallow on the U1.** `LANE_UNLOAD` retracts 60 mm out
