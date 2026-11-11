@@ -141,8 +141,12 @@ a spool you set in the AFC panel stays until the U1's changes again.
 - Active spool: T3→T1→T0→T3 with one SpoolLink write per change, no flip
 - Settle time: a 4 s "no spool" gap (tag cleared, rescanned) left the lane
   alone; a lasting change was applied after ~7 s, the rescan ~6 s later
+- Multi-toolhead Offset Calibration (screen, Device Calibration): every
+  `T<n> A0` went to Snapmaker's `_T<n>`, offsets saved to
+  `snapmaker/extruder_base_position.json`, AFC's loaded lane matched the
+  active head afterwards, no errors
 
-Not yet: runout lane switching, XYZ calibration, a firmware update, `install.sh` on a printer that never had
+Not yet: runout lane switching, a firmware update, `install.sh` on a printer that never had
 AFC.
 
 ## Known issues
