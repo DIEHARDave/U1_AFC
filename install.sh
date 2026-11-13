@@ -34,6 +34,15 @@ done
 
 say() { echo ">> $*"; }
 die() { echo "!! $*" >&2; exit 1; }
+# printer.cfg and fluidd.cfg belong to lava, mode 644, on a stock U1. AFC's
+# installer runs as root and can leave files it rewrites root-only (0600),
+# and Klipper (user lava) then can't open them.
+fix_config_perms() {
+    for f in "$CFG/printer.cfg" "$CFG/fluidd.cfg"; do
+        if [ -f "$f" ] && [ ! -L "$f" ]; then chown lava:lava "$f"; chmod 644 "$f"; fi
+    done
+    if [ -d "$CFG/AFC" ]; then chown -R lava:lava "$CFG/AFC"; fi
+}
 
 [ "$(id -u)" = 0 ] || die "Run as root."
 grep -q 'RK_BUILD_INFO="snapmaker' /etc/os-release 2>/dev/null || die "This is not a Snapmaker U1."
@@ -140,6 +149,7 @@ ln -sfn "$HERE/extras/u1_afc.py" "$KLIPPY/extras/u1_afc.py"
 # 7. AFC's own U1 enable (config, include, extras symlinks; restarts Klipper) --
 say "Running AFC's U1 enable"
 bash "$AFC_DIR/include/U1_extended_firmware_install.sh" -e
+fix_config_perms
 
 if [ ! -f "$CFG/AFC/u1_afc.cfg" ]; then
     cp "$HERE/config/u1_afc.cfg" "$CFG/AFC/u1_afc.cfg"

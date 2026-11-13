@@ -34,6 +34,12 @@ done
 
 say() { echo ">> $*"; }
 die() { echo "!! $*" >&2; exit 1; }
+# printer.cfg and fluidd.cfg belong to lava, mode 644, on a stock U1.
+fix_config_perms() {
+    for f in "$CFG/printer.cfg" "$CFG/fluidd.cfg"; do
+        if [ -f "$f" ] && [ ! -L "$f" ]; then chown lava:lava "$f"; chmod 644 "$f"; fi
+    done
+}
 
 [ "$(id -u)" = 0 ] || die "Run as root."
 state="$(curl -s -m 5 "$MOON/printer/objects/query?print_stats=state" \
@@ -46,6 +52,14 @@ if [ -f "$AFC_DIR/include/U1_extended_firmware_install.sh" ]; then
     say "Running AFC's U1 disable (include, symlinks, AFC-Lite modules back)"
     bash "$AFC_DIR/include/U1_extended_firmware_install.sh" -d || true
 fi
+# AFC's installer runs as root and can leave the files it rewrites or moves
+# back as root-only (0600): Klipper (user lava) then fails with "Unable to open
+# config file" or "Permission denied: .../extras/AFC.py". Stock owners/modes:
+fix_config_perms
+for f in AFC.py AFC_lane.py AFC_unit.py; do
+    p="$KLIPPY/extras/$f"
+    if [ -f "$p" ] && [ ! -L "$p" ]; then chown root:root "$p"; chmod 644 "$p"; fi
+done
 
 rm -f "$KLIPPY/extras/u1_afc.py"
 rm -f "$CFG/AFC/u1_afc.cfg"
